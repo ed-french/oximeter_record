@@ -1,5 +1,6 @@
 import asyncio
 from oximeter import Oximeter, Reading
+from typing import Optional
 
 from datetime import datetime
 
@@ -18,26 +19,62 @@ class ReadingStorer:
     def __del__(self):
         self._reading_file.close()
 
+class Reconnector:
+    def __init__(self, oximeter: Oximeter|None = None):
+        self._oximeter = oximeter
+        self._reconnect_task: Optional[asyncio.Task] = None
 
-def on_reading(r: Reading):
-    print(r)
+    def set_oximeter(self, oximeter: Oximeter):
+        self._oximeter = oximeter
+
+    def handle_disconnect(self, exc: Exception | None):
+        if not self._oximeter:
+            return
+
+        # Prevent multiple concurrent reconnect loops
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+
+        loop = asyncio.get_running_loop()
+        self._reconnect_task = loop.create_task(self._reconnect_loop())
+
+
+    async def _reconnect_loop(self):
+        print("Oximeter disconnected, attempting to reconnect...")
+        while True:
+            try:
+                await self._oximeter.connect()
+                print("Reconnected to oximeter.")
+                return
+            except Exception as e:
+                print(f"Reconnection failed: {e}, retrying in 5 seconds...")
+                await asyncio.sleep(5)
+
+
+
 
 # Test callback for disconnect
 def on_disconnect(exc):
     print("Oximeter disconnected")
     print(f"Exception: {exc=}")
 
+
+
 async def main():
-    r = ReadingStorer()
+    storer = ReadingStorer()
+    reconnector = Reconnector()
+
     ox = Oximeter(
-        on_reading=r.store_reading,
-        on_disconnect=on_disconnect,
+        on_reading=storer.store_reading,
+        on_disconnect=reconnector.handle_disconnect,
     )
+    reconnector.set_oximeter(ox)
     
     await ox.connect()
-    await asyncio.sleep(30)
+
+    await asyncio.sleep(200)
     print("Disconnecting, session over.")
-    del r
+    del storer
     await ox.disconnect()
 
 if __name__ == "__main__":
