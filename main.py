@@ -1,36 +1,9 @@
-import asyncio,threading
-from oximeter import Oximeter, Reading
-from typing import Optional
-
-from datetime import datetime
-
-
-class ReadingStorer:
-    def __init__(self):
-        reading_filename=f"readings_{datetime.now().isoformat().replace(':', '-')}.txt"
-        self._reading_file=open(reading_filename, "a")
-        self._reading_file.write(Reading.get_csv_header() + "\n")
-
-    def store_reading(self, reading: Reading):
-        # Move cursor up and clear previous block
-        for _ in range(6):
-            print("\x1b[1A\x1b[2K", end="")
-        print(f"Storing reading: {reading}\nQ+Enter to quit.")
-        self._reading_file.write(reading.get_csv_line() + "\n")
-        self._reading_file.flush()
-
-    def __del__(self):
-        self._reading_file.close()
+import asyncio
+from oximeter import Oximeter, ReadingStorer, QuitWatcher
 
 
 
-def wait_for_quit(stop_event: asyncio.Event):
-    # Run in non-async thread to poll the stdin
-    while True:
-        key = input().strip().lower()
-        if key == "q":
-            stop_event.set()
-            break
+
 
 
 
@@ -38,9 +11,9 @@ def wait_for_quit(stop_event: asyncio.Event):
 
 async def main():
 
-    stop_event = asyncio.Event()
+    storer = ReadingStorer(show_readings_in_console=True)
 
-    storer = ReadingStorer()
+
 
     ox = Oximeter(
         on_reading=storer.store_reading,
@@ -50,17 +23,15 @@ async def main():
     
     await ox.connect()
     print("\n\n\n\n\n\n")
-    # Start keyboard watcher
-    threading.Thread(
-        target=wait_for_quit,
-        args=(stop_event,),
-        daemon=True,
-    ).start()
 
-    print("Running. Press Q + Enter to quit.")
+    # Start keyboard watcher to monitor for the quit-  Q+enter in the console
+    quit_watcher = QuitWatcher()
+    quit_watcher.start()
+
+
 
     # Wait forever until told to stop
-    await stop_event.wait()
+    await quit_watcher.quit_requested.wait()
 
     print("Disconnecting, session over.")
     

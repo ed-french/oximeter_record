@@ -1,4 +1,5 @@
 import logging
+import threading
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
@@ -175,6 +176,42 @@ class Reconnector:
                 print(f"Reconnection failed: {e}, retrying in 5 seconds...")
                 await asyncio.sleep(5)
 
+
+class ReadingStorer:
+    def __init__(self,
+                 path:str="",
+                 show_readings_in_console:bool=False):
+        reading_filename=f"{path}readings_{datetime.now().isoformat().replace(':', '-')}.txt"
+        self._reading_file=open(reading_filename, "a")
+        self._reading_file.write(Reading.get_csv_header() + "\n")
+        self._show_readings_in_console = show_readings_in_console
+
+    def store_reading(self, reading: Reading):
+        if self._show_readings_in_console:
+            # Move cursor up and clear previous block
+            for _ in range(6):
+                print("\x1b[1A\x1b[2K", end="")
+            print(f"Storing reading: {reading}\nQ+Enter to quit.")
+        self._reading_file.write(reading.get_csv_line() + "\n")
+        self._reading_file.flush()
+
+    def __del__(self):
+        self._reading_file.close()
+
+
+class QuitWatcher(threading.Thread):
+    def __init__(self):
+        self.quit_requested=asyncio.Event()
+        super().__init__(name="quit_console_watcher", daemon=True)
+
+
+    def run(self):
+        # Run in non-async thread to poll the stdin
+        while True:
+            key = input().strip().lower()
+            if key == "q":
+                self.quit_requested.set()
+                break
 
 if __name__ == "__main__":
     
