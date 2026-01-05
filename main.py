@@ -1,4 +1,4 @@
-import asyncio
+import asyncio,threading
 from oximeter import Oximeter, Reading
 from typing import Optional
 
@@ -12,7 +12,10 @@ class ReadingStorer:
         self._reading_file.write(Reading.get_csv_header() + "\n")
 
     def store_reading(self, reading: Reading):
-        print(f"Storing reading: {reading}")
+        # Move cursor up and clear previous block
+        for _ in range(6):
+            print("\x1b[1A\x1b[2K", end="")
+        print(f"Storing reading: {reading}\nQ+Enter to quit.")
         self._reading_file.write(reading.get_csv_line() + "\n")
         self._reading_file.flush()
 
@@ -52,6 +55,14 @@ class Reconnector:
 
 
 
+def wait_for_quit(stop_event: asyncio.Event):
+    # Run in non-async thread to poll the stdin
+    while True:
+        key = input().strip().lower()
+        if key == "q":
+            stop_event.set()
+            break
+
 
 # Test callback for disconnect
 def on_disconnect(exc):
@@ -61,6 +72,9 @@ def on_disconnect(exc):
 
 
 async def main():
+
+    stop_event = asyncio.Event()
+
     storer = ReadingStorer()
     reconnector = Reconnector()
 
@@ -71,11 +85,23 @@ async def main():
     reconnector.set_oximeter(ox)
     
     await ox.connect()
+    print("\n\n\n\n\n\n")
+    # Start keyboard watcher
+    threading.Thread(
+        target=wait_for_quit,
+        args=(stop_event,),
+        daemon=True,
+    ).start()
 
-    await asyncio.sleep(200)
+    print("Running. Press Q + Enter to quit.")
+
+    # Wait forever until told to stop
+    await stop_event.wait()
+
     print("Disconnecting, session over.")
-    del storer
+    
     await ox.disconnect()
+    del storer # ensure file is closed
 
 if __name__ == "__main__":
     asyncio.run(main())
