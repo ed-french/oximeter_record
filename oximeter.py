@@ -72,6 +72,7 @@ class Oximeter:
         service_uuid:str|None = None,
         on_reading: Callable[[Reading], None]=None,
         on_disconnect: Optional[Callable[[Exception | None], None]] = None,
+        auto_reconnect: bool = False,
     ):
         if address is None:
             address = DEFAULT_BT_ADDRESS
@@ -84,6 +85,9 @@ class Oximeter:
 
         self._client: BleakClient | None = None
         self._connected = False
+        if auto_reconnect:
+            self._reconnector = Reconnector(self)
+            self._on_disconnect = self._reconnector.handle_disconnect
 
     def _decode_packet(self, data: bytearray) -> Optional[Reading]:
         # Summary packets start with 0xFF
@@ -140,6 +144,36 @@ class Oximeter:
             self._connected = False
 
 
+class Reconnector:
+    def __init__(self, oximeter: Oximeter|None = None):
+        self._oximeter = oximeter
+        self._reconnect_task: Optional[asyncio.Task] = None
+
+    def set_oximeter(self, oximeter: Oximeter):
+        self._oximeter = oximeter
+
+    def handle_disconnect(self, exc: Exception | None):
+        if not self._oximeter:
+            return
+
+        # Prevent multiple concurrent reconnect loops
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+
+        loop = asyncio.get_running_loop()
+        self._reconnect_task = loop.create_task(self._reconnect_loop())
+
+
+    async def _reconnect_loop(self):
+        print("Oximeter disconnected, attempting to reconnect...")
+        while True:
+            try:
+                await self._oximeter.connect()
+                print("Reconnected to oximeter.")
+                return
+            except Exception as e:
+                print(f"Reconnection failed: {e}, retrying in 5 seconds...")
+                await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
